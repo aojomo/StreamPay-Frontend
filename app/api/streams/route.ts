@@ -2,8 +2,8 @@ import { NextResponse } from "next/server";
 import {
   checkIdempotency,
   computeFingerprint,
-  decodeCursor,
-  encodeCursor,
+  decodeCompositeCursor,
+  encodeCompositeCursor,
   getStore,
   idempotencyToken,
   setIdempotency,
@@ -92,23 +92,29 @@ export async function GET(request: Request) {
   }
 
   if (cursor) {
+    let cursorTimestamp: string;
     let cursorId: string;
     try {
-      cursorId = decodeCursor(cursor);
+      const decoded = decodeCompositeCursor(cursor);
+      cursorTimestamp = decoded.timestamp;
+      cursorId = decoded.id;
     } catch {
       return errorResponse("INVALID_CURSOR", "Malformed cursor", 422);
     }
-    const cursorIndex = streams.findIndex((stream) => stream.id === cursorId);
-    if (cursorIndex >= 0) {
-      streams = streams.slice(cursorIndex + 1);
-    }
+    // Filter to only streams strictly after the cursor in (createdAt, id) order.
+    // Using filter rather than findIndex avoids bugs if new streams are inserted
+    // between pages with the same (createdAt, id) tuple.
+    streams = streams.filter((stream) => {
+      const tsCmp = stream.createdAt.localeCompare(cursorTimestamp);
+      return tsCmp > 0 || (tsCmp === 0 && stream.id.localeCompare(cursorId) > 0);
+    });
   }
 
   const paginatedStreams = streams.slice(0, limit);
   const hasNext = streams.length > limit;
   const nextCursor =
     hasNext && paginatedStreams.length > 0
-      ? encodeCursor(paginatedStreams[paginatedStreams.length - 1].id)
+      ? encodeCompositeCursor(paginatedStreams[paginatedStreams.length - 1].createdAt, paginatedStreams[paginatedStreams.length - 1].id)
       : null;
 
   logger.info("Streams listed successfully", {

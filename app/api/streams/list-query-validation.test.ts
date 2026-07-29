@@ -7,7 +7,7 @@
  * previously produced an empty list).
  */
 
-import { resetDb } from "@/app/lib/db";
+import { encodeCompositeCursor, resetDb } from "@/app/lib/db";
 import { resetRateLimitStore } from "@/app/lib/rate-limit-store";
 import { GET as listStreams, POST as createStream } from "@/app/api/streams/route";
 
@@ -99,8 +99,10 @@ describe("GET /api/streams query validation", () => {
     expect(res.status).toBe(422);
   });
 
-  it("treats a decodable but unknown cursor as a no-op", async () => {
-    const res = await listStreams(getRequest("?cursor=bm8tc3VjaC1pZA=="));
+  it("treats a decodable but unknown composite cursor as a no-op", async () => {
+    // A valid composite cursor pointing to a non-existent stream
+    const fakeCursor = encodeCompositeCursor("2000-01-01T00:00:00.000Z", "no-such-id");
+    const res = await listStreams(getRequest(`?cursor=${encodeURIComponent(fakeCursor)}`));
     expect(res.status).toBe(200);
   });
 
