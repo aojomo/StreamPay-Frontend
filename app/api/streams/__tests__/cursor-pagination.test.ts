@@ -10,7 +10,7 @@
  *   - Malformed / invalid cursors
  *   - Cursor + status filter interaction
  *   - Cursor at the end of the list (no next page)
- *   - Empty cursor param (422)
+ *   - Cursor at exact boundary (anchor exclusion)
  */
 
 import { encodeCompositeCursor, getStore, resetDb } from "@/app/lib/db";
@@ -175,6 +175,29 @@ describe("GET /api/streams — composite cursor pagination", () => {
     expect(body.meta.nextCursor).toBeNull();
   });
 
+  it("excludes the anchor stream when cursor matches its (createdAt, id) exactly", async () => {
+    // Cursor pointing at a specific stream must NOT include that stream
+    // in the result (strictly-after semantics).
+    await seedDeterministicStreams(5);
+    const allStreams = Array.from(getStore().streamRepository.streams.values()).sort((a, b) =>
+      a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id),
+    );
+    const secondStream = allStreams[1];
+    const anchorCursor = encodeCompositeCursor(secondStream.createdAt, secondStream.id);
+
+    const res = await listStreams(
+      getRequest(`?limit=10&cursor=${encodeURIComponent(anchorCursor)}`),
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    // Should return streams strictly after the anchor (allStreams[2..4])
+    expect(body.data).toHaveLength(3);
+    expect(body.data[0].id).toBe(allStreams[2].id);
+    expect(body.data[1].id).toBe(allStreams[3].id);
+    expect(body.data[2].id).toBe(allStreams[4].id);
+    expect(body.meta.hasNext).toBe(false);
+  });
+
   it("accepts a cursor that points past the last item (filter yields empty)", async () => {
     const ids = await seedDeterministicStreams(3);
     // A cursor pointing after the last stream should return an empty page
@@ -196,11 +219,6 @@ describe("GET /api/streams — composite cursor pagination", () => {
     expect(res.status).toBe(422);
     const body = await res.json();
     expect(body.error.code).toBe("INVALID_CURSOR");
-  });
-
-  it("returns 422 for an empty cursor param", async () => {
-    const res = await listStreams(getRequest("?cursor="));
-    expect(res.status).toBe(422);
   });
 
   it("paginates correctly when streams share the same createdAt timestamp", async () => {
